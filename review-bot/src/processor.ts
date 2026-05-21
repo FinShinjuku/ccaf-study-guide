@@ -1,6 +1,6 @@
-import type { Octokit } from "@octokit/rest";
 import { config } from "./config.js";
 import {
+  type GitHubClient,
   listPullRequestFiles,
   postReviewComment,
   upsertReviewLabels
@@ -10,7 +10,7 @@ import { reviewPullRequest } from "./review.js";
 import type { ReviewResult } from "./types.js";
 
 export async function processPullRequest(params: {
-  octokit: InstanceType<typeof Octokit>;
+  octokit: GitHubClient;
   repoFullName: string;
   pullNumber: number;
   pullUrl: string;

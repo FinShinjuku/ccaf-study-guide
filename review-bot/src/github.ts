@@ -1,5 +1,4 @@
 import { App } from "@octokit/app";
-import type { Octokit } from "@octokit/rest";
 import { config, githubPrivateKey } from "./config.js";
 import type { PullRequestFile, ReviewResult } from "./types.js";
 
@@ -8,27 +7,44 @@ export const app = new App({
   privateKey: githubPrivateKey()
 });
 
-export async function installationClient(installationId: number): Promise<InstanceType<typeof Octokit>> {
-  return app.getInstallationOctokit(installationId) as Promise<InstanceType<typeof Octokit>>;
+export type GitHubClient = Awaited<ReturnType<typeof app.getInstallationOctokit>>;
+
+type RequestFn = (route: string, parameters?: Record<string, unknown>) => Promise<{ data: unknown }>;
+
+export async function installationClient(installationId: number): Promise<GitHubClient> {
+  return app.getInstallationOctokit(installationId);
 }
 
 export async function listInstallationIds(): Promise<number[]> {
-  const response = await app.octokit.request("GET /app/installations", {
+  const data = await requestData(app.octokit as GitHubClient, "GET /app/installations", {
     per_page: 100
   });
-  return response.data.map((installation: { id: number }) => installation.id);
+  return asArray<{ id: number }>(data, "installations").map((installation) => installation.id);
 }
 
 export async function listInstallationRepositories(params: {
-  octokit: InstanceType<typeof Octokit>;
+  octokit: GitHubClient;
 }): Promise<Array<{ full_name?: string; archived?: boolean }>> {
-  return params.octokit.paginate(params.octokit.rest.apps.listReposAccessibleToInstallation, {
-    per_page: 100
-  });
+  const repositories: Array<{ full_name?: string; archived?: boolean }> = [];
+
+  for (let page = 1; ; page += 1) {
+    const data = asRecord(await requestData(params.octokit, "GET /installation/repositories", {
+      per_page: 100,
+      page
+    }), "installation repositories");
+    const pageRepositories = asArray<{ full_name?: string; archived?: boolean }>(
+      data.repositories,
+      "installation repositories"
+    );
+    repositories.push(...pageRepositories);
+    if (pageRepositories.length < 100) break;
+  }
+
+  return repositories;
 }
 
 export async function listOpenPullRequests(params: {
-  octokit: InstanceType<typeof Octokit>;
+  octokit: GitHubClient;
   owner: string;
   repo: string;
 }): Promise<Array<{
@@ -41,27 +57,32 @@ export async function listOpenPullRequests(params: {
   head: { sha: string };
   user: { login: string } | null;
 }>> {
-  return params.octokit.paginate(params.octokit.rest.pulls.list, {
+  return paginateArray(params.octokit, "GET /repos/{owner}/{repo}/pulls", {
     owner: params.owner,
     repo: params.repo,
     state: "open",
     sort: "updated",
-    direction: "desc",
-    per_page: 100
+    direction: "desc"
   });
 }
 
 export async function listPullRequestFiles(params: {
-  octokit: InstanceType<typeof Octokit>;
+  octokit: GitHubClient;
   owner: string;
   repo: string;
   pullNumber: number;
 }): Promise<PullRequestFile[]> {
-  const files = await params.octokit.paginate(params.octokit.rest.pulls.listFiles, {
+  const files = await paginateArray<{
+    filename: string;
+    status: string;
+    additions: number;
+    deletions: number;
+    changes: number;
+    patch?: string;
+  }>(params.octokit, "GET /repos/{owner}/{repo}/pulls/{pull_number}/files", {
     owner: params.owner,
     repo: params.repo,
-    pull_number: params.pullNumber,
-    per_page: 100
+    pull_number: params.pullNumber
   });
 
   return files.map((file) => ({
@@ -75,7 +96,7 @@ export async function listPullRequestFiles(params: {
 }
 
 export async function upsertReviewLabels(params: {
-  octokit: InstanceType<typeof Octokit>;
+  octokit: GitHubClient;
   owner: string;
   repo: string;
   issueNumber: number;
@@ -87,60 +108,106 @@ export async function upsertReviewLabels(params: {
   await ensureLabel(params.octokit, params.owner, params.repo, config.REVIEW_LABEL_OK, "0E8A16");
   await ensureLabel(params.octokit, params.owner, params.repo, config.REVIEW_LABEL_NEEDS_WORK, "D93F0B");
 
-  await params.octokit.rest.issues.addLabels({
+  await requestData(params.octokit, "POST /repos/{owner}/{repo}/issues/{issue_number}/labels", {
     owner: params.owner,
     repo: params.repo,
     issue_number: params.issueNumber,
     labels: [wanted]
   });
 
-  await params.octokit.rest.issues.removeLabel({
+  await requestData(params.octokit, "DELETE /repos/{owner}/{repo}/issues/{issue_number}/labels/{name}", {
     owner: params.owner,
     repo: params.repo,
     issue_number: params.issueNumber,
     name: unwanted
   }).catch((error: unknown) => {
-    if (typeof error === "object" && error && "status" in error && error.status === 404) return;
+    if (isHttpStatus(error, 404)) return;
     throw error;
   });
 }
 
 async function ensureLabel(
-  octokit: InstanceType<typeof Octokit>,
+  octokit: GitHubClient,
   owner: string,
   repo: string,
   name: string,
   color: string
 ): Promise<void> {
-  await octokit.rest.issues.getLabel({ owner, repo, name }).catch(async (error: unknown) => {
-    if (typeof error === "object" && error && "status" in error && error.status === 404) {
-      await octokit.rest.issues.createLabel({
-        owner,
-        repo,
-        name,
-        color,
-        description: "AI pull request review status"
-      });
-      return;
+  await requestData(octokit, "GET /repos/{owner}/{repo}/labels/{name}", { owner, repo, name }).catch(
+    async (error: unknown) => {
+      if (isHttpStatus(error, 404)) {
+        await requestData(octokit, "POST /repos/{owner}/{repo}/labels", {
+          owner,
+          repo,
+          name,
+          color,
+          description: "AI pull request review status"
+        });
+        return;
+      }
+      throw error;
     }
-    throw error;
-  });
+  );
 }
 
 export async function postReviewComment(params: {
-  octokit: InstanceType<typeof Octokit>;
+  octokit: GitHubClient;
   owner: string;
   repo: string;
   issueNumber: number;
   result: ReviewResult;
   threshold: number;
 }): Promise<void> {
-  await params.octokit.rest.issues.createComment({
+  await requestData(params.octokit, "POST /repos/{owner}/{repo}/issues/{issue_number}/comments", {
     owner: params.owner,
     repo: params.repo,
     issue_number: params.issueNumber,
     body: formatReviewComment(params.result, params.threshold)
   });
+}
+
+async function paginateArray<T>(
+  octokit: GitHubClient,
+  route: string,
+  parameters: Record<string, unknown>
+): Promise<T[]> {
+  const results: T[] = [];
+
+  for (let page = 1; ; page += 1) {
+    const items = asArray<T>(await requestData(octokit, route, {
+      ...parameters,
+      per_page: 100,
+      page
+    }), route);
+    results.push(...items);
+    if (items.length < 100) break;
+  }
+
+  return results;
+}
+
+async function requestData(
+  octokit: GitHubClient,
+  route: string,
+  parameters?: Record<string, unknown>
+): Promise<unknown> {
+  const request = octokit.request as unknown as RequestFn;
+  const response = await request(route, parameters);
+  return response.data;
+}
+
+function asArray<T>(value: unknown, name: string): T[] {
+  if (Array.isArray(value)) return value as T[];
+  throw new Error(`unexpected GitHub ${name} response`);
+}
+
+function asRecord(value: unknown, name: string): Record<string, unknown> {
+  if (typeof value === "object" && value !== null) return value as Record<string, unknown>;
+  throw new Error(`unexpected GitHub ${name} response`);
+}
+
+function isHttpStatus(error: unknown, status: number): boolean {
+  return typeof error === "object" && error !== null && "status" in error && error.status === status;
 }
 
 function formatReviewComment(result: ReviewResult, threshold: number): string {
