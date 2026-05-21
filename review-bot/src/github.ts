@@ -12,6 +12,45 @@ export async function installationClient(installationId: number): Promise<Instan
   return app.getInstallationOctokit(installationId) as Promise<InstanceType<typeof Octokit>>;
 }
 
+export async function listInstallationIds(): Promise<number[]> {
+  const response = await app.octokit.request("GET /app/installations", {
+    per_page: 100
+  });
+  return response.data.map((installation: { id: number }) => installation.id);
+}
+
+export async function listInstallationRepositories(params: {
+  octokit: InstanceType<typeof Octokit>;
+}): Promise<Array<{ full_name?: string; archived?: boolean }>> {
+  return params.octokit.paginate(params.octokit.rest.apps.listReposAccessibleToInstallation, {
+    per_page: 100
+  });
+}
+
+export async function listOpenPullRequests(params: {
+  octokit: InstanceType<typeof Octokit>;
+  owner: string;
+  repo: string;
+}): Promise<Array<{
+  number: number;
+  title: string;
+  body: string | null;
+  draft?: boolean;
+  html_url: string;
+  updated_at: string;
+  head: { sha: string };
+  user: { login: string } | null;
+}>> {
+  return params.octokit.paginate(params.octokit.rest.pulls.list, {
+    owner: params.owner,
+    repo: params.repo,
+    state: "open",
+    sort: "updated",
+    direction: "desc",
+    per_page: 100
+  });
+}
+
 export async function listPullRequestFiles(params: {
   octokit: InstanceType<typeof Octokit>;
   owner: string;

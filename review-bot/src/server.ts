@@ -1,16 +1,13 @@
 import express from "express";
 import { Webhooks } from "@octokit/webhooks";
 import { config } from "./config.js";
-import {
-  installationClient,
-  listPullRequestFiles,
-  postReviewComment,
-  upsertReviewLabels
-} from "./github.js";
-import { notifyReviewSummary } from "./notify.js";
-import { reviewPullRequest } from "./review.js";
+import { installationClient } from "./github.js";
+import { startPoller } from "./poller.js";
+import { processPullRequest } from "./processor.js";
 
-const webhooks = new Webhooks({ secret: config.GITHUB_WEBHOOK_SECRET });
+const webhooks = config.GITHUB_WEBHOOK_SECRET
+  ? new Webhooks({ secret: config.GITHUB_WEBHOOK_SECRET })
+  : null;
 const app = express();
 const recentEvents = new Map<string, number>();
 
@@ -29,6 +26,10 @@ app.post("/webhooks/github", express.raw({ type: "application/json", limit: "2mb
   }
 
   const payloadText = req.body.toString("utf8");
+  if (!webhooks) {
+    res.status(503).json({ error: "webhook mode is not configured" });
+    return;
+  }
   const valid = await webhooks.verify(payloadText, signature);
   if (!valid) {
     res.status(401).json({ error: "invalid webhook signature" });
@@ -55,52 +56,27 @@ async function handleWebhook(eventName: string, deliveryId: string, payload: any
   if (previous && now - previous < 30_000) return;
   recentEvents.set(dedupeKey, now);
 
-  const [owner, repo] = payload.repository.full_name.split("/");
   const pullNumber = payload.pull_request.number;
   const octokit = await installationClient(payload.installation.id);
-  const files = await listPullRequestFiles({ octokit, owner, repo, pullNumber });
-
-  if (files.length === 0) return;
-
-  const result = await reviewPullRequest({
-    repoFullName: payload.repository.full_name,
-    pullNumber,
-    title: payload.pull_request.title,
-    body: payload.pull_request.body,
-    author: payload.pull_request.user.login,
-    files
-  });
-
-  await postReviewComment({
+  const result = await processPullRequest({
     octokit,
-    owner,
-    repo,
-    issueNumber: pullNumber,
-    result,
-    threshold: config.MERGE_OK_THRESHOLD
-  });
-
-  await upsertReviewLabels({
-    octokit,
-    owner,
-    repo,
-    issueNumber: pullNumber,
-    mergeOk: result.score >= config.MERGE_OK_THRESHOLD
-  });
-
-  await notifyReviewSummary({
     repoFullName: payload.repository.full_name,
     pullNumber,
     pullUrl: payload.pull_request.html_url,
     title: payload.pull_request.title,
-    result
-  }).catch((error) => {
-    console.error("chat notification failed", error);
+    body: payload.pull_request.body,
+    author: payload.pull_request.user.login
   });
 
-  console.log(`reviewed ${payload.repository.full_name}#${pullNumber} via ${deliveryId}: ${result.score}`);
+  console.log(`reviewed ${payload.repository.full_name}#${pullNumber} via ${deliveryId}: ${result?.score ?? "no-files"}`);
 }
 
-app.listen(config.PORT, () => {
-  console.log(`PR review bot listening on :${config.PORT}`);
-});
+if (config.BOT_MODE === "webhook" || config.BOT_MODE === "both") {
+  app.listen(config.PORT, () => {
+    console.log(`PR review bot listening on :${config.PORT}`);
+  });
+}
+
+if (config.BOT_MODE === "poll" || config.BOT_MODE === "both") {
+  startPoller();
+}

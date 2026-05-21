@@ -1,15 +1,13 @@
 # FinShinjuku OpenClaw PR Review Bot
 
-GitHub Actionsを使わず、GitHub AppのWebhookでPRをOpenClawにレビューさせる軽量Botです。
+GitHub Actionsを使わず、GitHub Appの権限でPRをOpenClawにレビューさせる軽量Botです。
+
+推奨構成は `BOT_MODE=poll` です。Mac miniからGitHub APIへ定期的にアクセスするだけなので、公開URL、受信ポート、トンネルサービスは不要です。
 
 ## できること
 
-- `pull_request.opened`
-- `pull_request.synchronize`
-- `pull_request.reopened`
-- `pull_request.ready_for_review`
-
-上記イベントでPR差分を取得し、AIレビューを実行します。
+- polling mode: Mac miniからGitHub APIを定期確認し、新規/更新PRをレビュー
+- webhook mode: GitHub App WebhookでPRイベントを受けてレビュー
 
 - OpenClawでPR差分をレビュー
 - 品質スコアを0-100で算出
@@ -37,6 +35,8 @@ Permissions:
 
 Webhook:
 
+- 公開URLなしで運用する場合は無効でOK
+- `BOT_MODE=webhook` または `BOT_MODE=both` の場合だけ有効化
 - URL: `https://<your-domain>/webhooks/github`
 - Secret: `.env` の `GITHUB_WEBHOOK_SECRET`
 - Events: Pull request
@@ -54,13 +54,26 @@ npm run build
 npm start
 ```
 
+公開URLなしで運用する場合は、`.env` を次の方針にします。
+
+```bash
+BOT_MODE=poll
+POLL_INTERVAL_SECONDS=300
+POLL_STATE_PATH=./data/pr-review-state.json
+POLL_REPOSITORY_OWNER=FinShinjuku
+POLL_REVIEW_EXISTING_ON_FIRST_RUN=false
+POLL_MAX_REVIEWS_PER_CYCLE=20
+```
+
+初回起動時は既存のopen PRをレビューせず、現在のhead SHAだけを記録します。以後、新規PRまたはhead SHAが変わったPRだけレビューします。
+
 ## ローカル開発
 
 ```bash
 npm run dev
 ```
 
-ローカルでGitHub Webhookを受ける場合は、ngrokやCloudflare Tunnelなどで公開URLを作ってください。
+ローカルでGitHub Webhookを受ける場合だけ、ngrokやCloudflare Tunnelなどで公開URLを作ってください。polling modeでは不要です。
 
 ## OpenClaw設定
 
@@ -98,6 +111,15 @@ CHAT_NOTIFY_ACCOUNT=default
 ## コスト制御
 
 - draft PRはレビューしません
+- polling modeの初回起動では既存open PRをレビューしません
 - 同一PR/同一commit SHAの短時間連続イベントは30秒デバウンスします
+- polling modeでは同一PR/同一commit SHAを再レビューしません
 - `MAX_PATCH_CHARS` でAIに送る差分量を制限します
 - GitHub ActionsのCPUは使いません
+
+## セキュリティ
+
+- polling modeでは外部からMac miniへ接続できるURLや受信ポートを作りません
+- GitHub Appの権限はレビューに必要な最小限にします
+- private key、`.env`、polling stateはリポジトリにコミットしません
+- `GITHUB_WEBHOOK_SECRET` はwebhook mode以外では不要です
