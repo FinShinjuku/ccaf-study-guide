@@ -1,6 +1,6 @@
-# FinShinjuku PR Review Bot
+# FinShinjuku OpenClaw PR Review Bot
 
-GitHub Actionsを使わず、GitHub AppのWebhookでPRをAIレビューする軽量Botです。
+GitHub Actionsを使わず、GitHub AppのWebhookでPRをOpenClawにレビューさせる軽量Botです。
 
 ## できること
 
@@ -11,16 +11,22 @@ GitHub Actionsを使わず、GitHub AppのWebhookでPRをAIレビューする軽
 
 上記イベントでPR差分を取得し、AIレビューを実行します。
 
+- OpenClawでPR差分をレビュー
 - 品質スコアを0-100で算出
 - 95点以上なら `ai-review:merge-ok` ラベル
 - 95点未満なら `ai-review:needs-work` ラベル
 - PRにレビューコメントを投稿
+- Lark/Feishuなどのチャットにレビュー要約を通知
 
 GitHub Actions runnerは使いません。
 
+## 対象リポジトリ
+
+このBotを現在の全リポジトリと今後作成されるリポジトリで動かすには、GitHub AppのInstall画面でRepository accessを `All repositories` にしてください。`Only select repositories` を選ぶと、今後作成されるリポジトリは自動では対象になりません。
+
 ## GitHub App設定
 
-GitHub Appを作成し、対象リポジトリへインストールしてください。
+GitHub Appを作成し、FinShinjukuアカウントへインストールしてください。
 
 Permissions:
 
@@ -34,6 +40,10 @@ Webhook:
 - URL: `https://<your-domain>/webhooks/github`
 - Secret: `.env` の `GITHUB_WEBHOOK_SECRET`
 - Events: Pull request
+
+Repository access:
+
+- All repositories
 
 ## 起動
 
@@ -51,6 +61,27 @@ npm run dev
 ```
 
 ローカルでGitHub Webhookを受ける場合は、ngrokやCloudflare Tunnelなどで公開URLを作ってください。
+
+## OpenClaw設定
+
+このBotはレビュー時に `openclaw agent` を呼び出します。Mac miniの `openclaw` ユーザーで動かす場合は、`.env` で次のように指定してください。
+
+```bash
+OPENCLAW_COMMAND=/Users/openclaw/.npm-global/bin/openclaw
+OPENCLAW_PATH=/opt/homebrew/opt/node@24/bin:/Users/openclaw/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+OPENCLAW_AGENT=main
+OPENCLAW_TIMEOUT_SECONDS=900
+```
+
+レビュー結果の要約をLark/FeishuのDMへ送る場合は、OpenClaw側でFeishuチャンネルが動作し、対象ユーザーがペアリング済みである必要があります。
+
+```bash
+CHAT_NOTIFY_CHANNEL=feishu
+CHAT_NOTIFY_TARGET=user:ou_your_lark_user_open_id
+CHAT_NOTIFY_ACCOUNT=default
+```
+
+`CHAT_NOTIFY_TARGET` を空にするとチャット通知は無効になります。
 
 ## 自動マージについて
 

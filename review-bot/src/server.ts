@@ -7,6 +7,7 @@ import {
   postReviewComment,
   upsertReviewLabels
 } from "./github.js";
+import { notifyReviewSummary } from "./notify.js";
 import { reviewPullRequest } from "./review.js";
 
 const webhooks = new Webhooks({ secret: config.GITHUB_WEBHOOK_SECRET });
@@ -85,6 +86,16 @@ async function handleWebhook(eventName: string, deliveryId: string, payload: any
     repo,
     issueNumber: pullNumber,
     mergeOk: result.score >= config.MERGE_OK_THRESHOLD
+  });
+
+  await notifyReviewSummary({
+    repoFullName: payload.repository.full_name,
+    pullNumber,
+    pullUrl: payload.pull_request.html_url,
+    title: payload.pull_request.title,
+    result
+  }).catch((error) => {
+    console.error("chat notification failed", error);
   });
 
   console.log(`reviewed ${payload.repository.full_name}#${pullNumber} via ${deliveryId}: ${result.score}`);
