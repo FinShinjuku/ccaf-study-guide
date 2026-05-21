@@ -45,6 +45,12 @@ Repository access:
 
 - All repositories
 
+Private key:
+
+- `Generate a private key` で `.pem` を発行
+- Mac miniでは `GITHUB_PRIVATE_KEY_PATH` に保存先を指定
+- `.pem` は `chmod 600` にしてください
+
 ## 起動
 
 ```bash

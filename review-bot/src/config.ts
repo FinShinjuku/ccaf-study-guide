@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { readFileSync } from "node:fs";
 import { z } from "zod";
 
 const booleanFromEnv = z.preprocess((value) => {
@@ -14,7 +15,8 @@ const schema = z.object({
   PORT: z.coerce.number().default(8787),
   PUBLIC_BASE_URL: z.string().optional(),
   GITHUB_APP_ID: z.string().min(1),
-  GITHUB_PRIVATE_KEY: z.string().min(1),
+  GITHUB_PRIVATE_KEY: z.string().optional(),
+  GITHUB_PRIVATE_KEY_PATH: z.string().optional(),
   GITHUB_WEBHOOK_SECRET: z.string().optional(),
   OPENCLAW_COMMAND: z.string().default("openclaw"),
   OPENCLAW_PATH: z.string().default("/opt/homebrew/opt/node@24/bin:/Users/openclaw/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"),
@@ -40,12 +42,22 @@ const schema = z.object({
       message: "GITHUB_WEBHOOK_SECRET is required when BOT_MODE is webhook or both"
     });
   }
+  if (!value.GITHUB_PRIVATE_KEY?.trim() && !value.GITHUB_PRIVATE_KEY_PATH?.trim()) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["GITHUB_PRIVATE_KEY"],
+      message: "GITHUB_PRIVATE_KEY or GITHUB_PRIVATE_KEY_PATH is required"
+    });
+  }
 });
 
 export const config = schema.parse(process.env);
 
 export function githubPrivateKey(): string {
-  return config.GITHUB_PRIVATE_KEY.replace(/\\n/g, "\n");
+  if (config.GITHUB_PRIVATE_KEY_PATH?.trim()) {
+    return readFileSync(config.GITHUB_PRIVATE_KEY_PATH.trim(), "utf8");
+  }
+  return (config.GITHUB_PRIVATE_KEY ?? "").replace(/\\n/g, "\n");
 }
 
 export function openClawEnv(): NodeJS.ProcessEnv {
